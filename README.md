@@ -100,6 +100,10 @@ always agree with pi. Nothing is stored in your worktree.
   counted but not displayed (`SHOW_CACHE_TOKENS` in `src/format.ts`). A
   session's cost can be mostly cache writes, so cost may look high next to
   its ↑/↓ counts.
+- **Snapshots and sharing.** A `/worktree-totals` snapshot is saved in the
+  current session and includes the first prompts of up to 20 other sessions
+  (plus local paths in any warnings). `/share` or `/export` of that session
+  publishes them too. Review before sharing.
 - **Narrow terminals:** pi shows all extension statuses on one line and cuts it
   off at the terminal width, so this status may be cut off.
 
@@ -124,3 +128,7 @@ Design notes, decisions and issues live in `.scratch/worktree-cost/`.
 | `src/tracker.ts`         | Per-runtime tracker; folds in the live session.  |
 | `src/format.ts`          | Footer and report formatting.                    |
 | `src/extension.ts`       | pi glue: events, status, command, renderer.      |
+
+## License
+
+[MIT](LICENSE)
