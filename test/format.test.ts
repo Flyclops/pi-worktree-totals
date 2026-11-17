@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { WorktreeTotals } from "../src/aggregate.ts";
 import {
+  clean,
   formatReport,
   formatStatus,
   formatTokenParts,
@@ -140,6 +141,28 @@ describe("formatReport", () => {
     const snap = toSnapshot(wt, base, AT);
     for (const x of snap.sessions) delete x.tokens;
     expect(formatReport(snap)).toMatch(/\$2\.000 {2}Second/);
+  });
+
+  it("strips terminal escape sequences from untrusted text", () => {
+    const evil = "\u001b]52;c;cGF5bG9hZA==\u0007label\u001b[2J";
+    const snap = toSnapshot(
+      { root: "/r\u001b[31m", lifetimeStart: null, kind: "main" },
+      {
+        ...base,
+        byModel: new Map([[`p/m\u001b[8m`, { cost: 1, tokens: tokens() }]]),
+        sessions: [{ ...base.sessions[0]!, label: evil }],
+        warnings: ["bad\u001b[0m\nline"],
+      },
+      AT,
+    );
+    const text = formatReport(snap);
+    expect(text).not.toMatch(/[\u0000-\u0009\u000b-\u001f\u007f-\u009f]/);
+    expect(text).toContain("]52;c;cGF5bG9hZA==label[2J");
+    expect(text).toContain("bad[0m line");
+  });
+
+  it("clean collapses whitespace and drops control characters", () => {
+    expect(clean(" a\tb\r\n c\u0000\u009b ")).toBe("a b c");
   });
 
   it("caps stored warnings", () => {

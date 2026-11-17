@@ -120,6 +120,19 @@ export function formatDate(ms: number): string {
   );
 }
 
+/**
+ * Make untrusted text (session labels, model keys, paths, warnings) safe to
+ * print in the terminal on one line. Whitespace runs collapse to one space,
+ * then remaining C0/C1 control characters, including ESC, are removed so
+ * text from session files can't inject terminal escape sequences.
+ */
+export function clean(text: string): string {
+  return text
+    .replace(/\s+/g, " ")
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, "")
+    .trim();
+}
+
 /** Max warnings stored in a snapshot. */
 export const WARNING_LINES = 10;
 
@@ -229,13 +242,13 @@ export function formatReport(r: ReportSnapshot, s: Style = plain): string {
       : wt.kind === "none"
         ? "not a git repository, all time"
         : "main checkout, all time";
-  out.push(`${dim("Worktree:")} ${wt.root} ${dim(`(${kind})`)}`);
+  out.push(`${dim("Worktree:")} ${clean(wt.root)} ${dim(`(${kind})`)}`);
   out.push(`${dim("Total:")} ${formatTotals(r.totals)}`);
 
   if (r.byModel.length > 0) {
     out.push("", s.bold("By model"));
     for (const [key, t] of r.byModel) {
-      out.push(`  ${dim(`${key}:`)} ${formatTotals(t)}`);
+      out.push(`  ${dim(`${clean(key)}:`)} ${formatTotals(t)}`);
     }
   }
 
@@ -264,7 +277,8 @@ export function formatReport(r: ReportSnapshot, s: Style = plain): string {
 
     r.sessions.forEach((line, i) => {
       out.push(
-        `  ${dim(formatDate(line.startedAt))}  ${figures[i]}  ${line.label}`,
+        `  ${dim(formatDate(line.startedAt))}  ${figures[i]}  ` +
+          clean(line.label),
       );
     });
     if (older > 0) {
@@ -277,7 +291,7 @@ export function formatReport(r: ReportSnapshot, s: Style = plain): string {
 
   if (r.warningCount > 0) {
     out.push("", dim(`${r.warningCount} warning(s):`));
-    for (const w of r.warnings) out.push(dim(`  ${w}`));
+    for (const w of r.warnings) out.push(dim(`  ${clean(w)}`));
     if (r.warningCount > r.warnings.length) {
       out.push(dim(`  … ${r.warningCount - r.warnings.length} more`));
     }

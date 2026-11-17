@@ -20,6 +20,7 @@ import {
 import { Box, Text } from "@earendil-works/pi-tui";
 import type { WorktreeTotals } from "./aggregate.ts";
 import {
+  clean,
   formatReport,
   formatStatus,
   isSnapshot,
@@ -69,14 +70,16 @@ export function createExtension(deps: ExtensionDeps = defaultDeps) {
         (err: unknown) => {
           if (gen !== generation) return;
           setStatus(ctx, `${STATUS_PREFIX} $?`);
-          report(ctx, `${NAME}: ${(err as Error)?.message ?? err}`, "error");
+          report(ctx, `${NAME}: ${clean(String((err as Error)?.message ?? err))}`, "error");
         },
       );
     }
 
     function show(ctx: ExtensionContext, cost: WorktreeTotals): void {
       setStatus(ctx, formatStatus(cost));
-      for (const w of cost.warnings) report(ctx, `${NAME}: ${w}`, "warning");
+      for (const w of cost.warnings) {
+        report(ctx, `${NAME}: ${clean(w)}`, "warning");
+      }
     }
 
     /**
