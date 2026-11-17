@@ -6,6 +6,11 @@
   "keywords": [
     "pi-package"
   ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Flyclops/pi-worktree-totals.git"
+  },
   "pi": {
     "extensions": [
       "./src/extension.ts"
