@@ -14,13 +14,15 @@ wt: ↑414 ↓168k $14.470
 ## Install
 
 ```bash
+pi install npm:pi-worktree-totals
+# or straight from GitHub
 pi install git:github.com/Flyclops/pi-worktree-totals
 ```
 
 Or try it for one run without installing:
 
 ```bash
-pi -e git:github.com/Flyclops/pi-worktree-totals
+pi -e npm:pi-worktree-totals
 ```
 
 For development, from a checkout:
@@ -65,7 +67,8 @@ to the model, and it reappears when you resume the session.
 
 ## What counts
 
-Vocabulary is defined in [GLOSSARY.md](GLOSSARY.md).
+Vocabulary is defined in
+[GLOSSARY.md](https://github.com/Flyclops/pi-worktree-totals/blob/main/GLOSSARY.md).
 
 - **Worktree:** the top level of the git working tree pi was started in
   (linked worktree or main checkout). Outside git, the start directory.
@@ -82,9 +85,9 @@ Vocabulary is defined in [GLOSSARY.md](GLOSSARY.md).
   even when the parent lives in a different worktree.
 - **`--no-session`:** the live, unsaved session is included.
 
-The numbers come straight from pi's session files
-(see [ADR-0001](docs/adr/0001-derive-cost-from-pi-sessions.md)), so they
-always agree with pi. Nothing is stored in your worktree.
+The numbers come straight from pi's session files (see
+[ADR-0001](https://github.com/Flyclops/pi-worktree-totals/blob/main/docs/adr/0001-derive-cost-from-pi-sessions.md)),
+so they always agree with pi. Nothing is stored in your worktree.
 
 ## Known limits
 
@@ -116,7 +119,8 @@ npm run bench       # cold-start benchmark (synthetic)
 node bench/cold-start.ts --real [dir]   # against your sessions, read-only
 ```
 
-Design notes, decisions and issues live in `.scratch/worktree-cost/`.
+Design notes, decisions and issues live in
+[`.scratch/worktree-cost/`](https://github.com/Flyclops/pi-worktree-totals/tree/main/.scratch/worktree-cost).
 
 | Module                   | Role                                             |
 | ------------------------ | ------------------------------------------------ |
@@ -131,4 +135,4 @@ Design notes, decisions and issues live in `.scratch/worktree-cost/`.
 
 ## License
 
-[MIT](LICENSE)
+[MIT](https://github.com/Flyclops/pi-worktree-totals/blob/main/LICENSE)
