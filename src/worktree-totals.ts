@@ -72,6 +72,7 @@ export class WorktreeTotalsIndex {
   private readonly canon = createCwdCanonicalizer();
   private tail: Promise<unknown> = Promise.resolve();
   private queued: Promise<WorktreeTotals> | undefined;
+  private pendingExtra: readonly ParsedSession[] = [];
 
   constructor(input: WorktreeTotalsInput) {
     this.input = input;
@@ -79,12 +80,18 @@ export class WorktreeTotalsIndex {
   }
 
   /**
-   * Bring the index up to date and return the Worktree Cost. `extra`
+   * Bring the index up to date and return the Worktree Totals. `extra`
    * sessions (e.g. the live in-memory Session) are aggregated alongside the
-   * files, with the same dedupe. An extra session replaces the file with the
-   * same path, so a Session is never listed twice.
+   * files, with the same dedupe. An extra session is merged with the file of
+   * the same path into one Session, so it's never listed twice and entries
+   * another process appended to that file still count.
+   *
+   * Calls made while a refresh is queued share its result; the queued run
+   * uses the most recent caller's `extra`, so it's never staler than any of
+   * its callers.
    */
   refresh(extra: readonly ParsedSession[] = []): Promise<WorktreeTotals> {
+    this.pendingExtra = extra;
     if (this.queued) return this.queued;
     // A previous refresh's failure was already delivered to its own caller;
     // it must not block later refreshes.
@@ -92,7 +99,7 @@ export class WorktreeTotalsIndex {
       .catch(() => undefined)
       .then(() => {
         this.queued = undefined;
-        return this.doRefresh(extra);
+        return this.doRefresh(this.pendingExtra);
       });
     this.queued = run;
     this.tail = run;
@@ -116,16 +123,19 @@ export class WorktreeTotalsIndex {
       }),
     );
 
-    const sessions: ParsedSession[] = [...extra];
-    const replaced = new Set(extra.map((s) => s.path));
+    const live = new Map(extra.map((s) => [s.path, s]));
+    const sessions: ParsedSession[] = [];
     for (const [path, entry] of this.cache) {
       if (entry.kind === "member") {
-        if (replaced.has(path)) continue;
-        sessions.push(toParsedSession(path, entry.state));
+        const disk = toParsedSession(path, entry.state);
+        const mem = live.get(path);
+        live.delete(path);
+        sessions.push(mem ? mergeLive(mem, disk) : disk);
       } else if (entry.kind === "invalid") {
         warnings.push(`${path}: not a pi session file`);
       }
     }
+    sessions.push(...live.values()); // live Sessions with no file (yet)
     return aggregate(sessions, this.input.lifetimeStart, warnings);
   }
 
@@ -173,6 +183,20 @@ export class WorktreeTotalsIndex {
       this.cache.set(path, { kind: "invalid", size: st.size, mtimeMs: st.mtimeMs });
     }
   }
+}
+
+/**
+ * One Session from its live (in-memory) and on-disk views. Memory has the
+ * freshest metadata (label) and can be ahead of disk; disk can be ahead of
+ * memory when another pi process appends to the same file. Billed entries
+ * are the union; aggregate() dedupes by key. Disk parse warnings are kept.
+ */
+function mergeLive(mem: ParsedSession, disk: ParsedSession): ParsedSession {
+  return {
+    ...mem,
+    billed: mem.billed.concat(disk.billed),
+    malformedLines: disk.malformedLines,
+  };
 }
 
 /** Promise.all with at most `limit` tasks in flight. Preserves order. */

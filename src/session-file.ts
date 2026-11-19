@@ -331,8 +331,10 @@ function applyEntries(
     ...prev,
     billed: billed.length ? prev.billed.concat(billed) : prev.billed,
     malformedLines,
-    ...(name !== undefined ? { name } : {}),
-    ...(firstPrompt !== undefined ? { firstPrompt } : {}),
+    // Always set: an empty session_info name clears the title in pi, so a
+    // cleared name must override an earlier one from `prev`.
+    name,
+    firstPrompt,
   };
 }
 

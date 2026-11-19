@@ -188,6 +188,20 @@ describe("computeWorktreeTotals", () => {
     expect(r.sessions[0]!.cost).toBe(1);
   });
 
+  it("lists pre-lifetime Sessions resumed with zero-cost usage", async () => {
+    // Copilot review, PR #1: free-model usage adds tokens but no cost.
+    fx.write(active, {
+      cwd: repo,
+      startedAt: min(0),
+      entries: [e.assistant(min(1), 5), e.assistant(min(30), 0, "free")],
+    });
+    const r = await run(new Date(min(20)));
+    expect(r.cost).toBe(0);
+    expect(r.tokens.input).toBe(10);
+    expect(r.sessions).toHaveLength(1);
+    expect(r.sessions[0]!.tokens.input).toBe(10);
+  });
+
   it("counts abandoned /tree branches", async () => {
     const root = e.user(min(1), "q");
     const branchA = { ...e.assistant(min(2), 1), parentId: root.id };

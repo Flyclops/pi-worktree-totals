@@ -72,9 +72,11 @@ export function aggregate(
 
   for (const s of ordered) {
     const own = emptyTotals();
+    let counted = 0;
     for (const e of s.billed) {
       if (e.at < since || seen.has(e.key)) continue;
       seen.add(e.key);
+      counted++;
       add(own, e.cost, e.tokens);
       add(total, e.cost, e.tokens);
       let m = byModel.get(e.model);
@@ -85,7 +87,9 @@ export function aggregate(
       warnings.push(`${s.path}: skipped ${s.malformedLines} malformed line(s)`);
     }
     // Leave out Sessions that belong only to a previous Worktree Lifetime.
-    if (own.cost > 0 || s.header.startedAt >= since) {
+    // Any counted entry keeps the Session, even at zero cost (free models),
+    // so session lines always add up to the totals.
+    if (counted > 0 || s.header.startedAt >= since) {
       lines.push({
         path: s.path,
         label: s.label,

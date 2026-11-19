@@ -185,4 +185,59 @@ describe("WorktreeTotalsIndex", () => {
     )!;
     expect((await index.refresh([live])).cost).toBe(3);
   });
+
+  // Copilot review, PR #1.
+  it("merges a live Session with its file when disk is ahead", async () => {
+    const first = e.assistant(min(1), 1);
+    const f = fx.write(active, { cwd: repo, startedAt: min(0), entries: [first] });
+    // Another pi process with the same session open appends to the file;
+    // this process's memory doesn't have that entry.
+    appendFileSync(f, line(e.assistant(min(2), 2)));
+    const header = JSON.parse(readFileSync(f, "utf8").split("\n")[0]!);
+    const live = parseSessionText(
+      f,
+      [header, first].map((x) => JSON.stringify(x)).join("\n"),
+    )!;
+
+    const r = await index.refresh([live]);
+    expect(r.cost).toBe(3);
+    expect(r.sessions).toHaveLength(1);
+  });
+
+  it("lets a cleared session name restore the first-prompt label", async () => {
+    const f = fx.write(active, {
+      cwd: repo,
+      startedAt: min(0),
+      entries: [e.user(min(1), "first prompt"), e.assistant(min(2), 1)],
+    });
+    appendFileSync(f, line(e.name(min(3), "Named")));
+    expect((await index.refresh()).sessions[0]!.label).toBe("Named");
+    appendFileSync(f, line(e.name(min(4), "")));
+    expect((await index.refresh()).sessions[0]!.label).toBe("first prompt");
+  });
+
+  it("a coalesced refresh uses the latest live snapshot", async () => {
+    session(1);
+    const liveWith = (cost: number) =>
+      parseSessionText(
+        "(live)",
+        [
+          {
+            type: "session",
+            id: "live",
+            timestamp: new Date(min(0)).toISOString(),
+            cwd: repo,
+          },
+          e.assistant(min(5), cost),
+        ]
+          .map((x) => JSON.stringify(x))
+          .join("\n"),
+      )!;
+    const running = index.refresh();
+    const stale = index.refresh([liveWith(10)]);
+    const latest = index.refresh([liveWith(20)]);
+    expect(latest).toBe(stale); // coalesced
+    await running;
+    expect((await latest).cost).toBe(21);
+  });
 });
