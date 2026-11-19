@@ -123,7 +123,18 @@ export class WorktreeTotalsIndex {
       }),
     );
 
-    const live = new Map(extra.map((s) => [s.path, s]));
+    // Live Sessions follow the same membership rule as files: header cwd
+    // within the Worktree. pi can run a resumed session under a cwd
+    // override while its header still names another Worktree.
+    const root = this.input.worktreeRoot;
+    const members = await Promise.all(
+      extra.map(async (s) =>
+        isWithin(await this.canon(s.header.cwd), root) ? s : undefined,
+      ),
+    );
+    const live = new Map(
+      members.filter((s) => s !== undefined).map((s) => [s.path, s]),
+    );
     const sessions: ParsedSession[] = [];
     for (const [path, entry] of this.cache) {
       if (entry.kind === "member") {

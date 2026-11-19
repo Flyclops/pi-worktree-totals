@@ -240,4 +240,26 @@ describe("WorktreeTotalsIndex", () => {
     await running;
     expect((await latest).cost).toBe(21);
   });
+
+  it("drops a live Session recorded in another Worktree", async () => {
+    // Copilot review, PR #1: pi can resume a session with a cwd override
+    // ("Continue" when its folder is gone); its header cwd still names the
+    // original Worktree. Same membership rule as files on disk.
+    session(1);
+    const foreign = parseSessionText(
+      "(live)",
+      [
+        {
+          type: "session",
+          id: "live",
+          timestamp: new Date(min(0)).toISOString(),
+          cwd: fx.dir("other-worktree"),
+        },
+        e.assistant(min(5), 50),
+      ]
+        .map((x) => JSON.stringify(x))
+        .join("\n"),
+    )!;
+    expect((await index.refresh([foreign])).cost).toBe(1);
+  });
 });
