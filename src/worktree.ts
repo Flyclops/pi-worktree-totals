@@ -35,12 +35,15 @@ export type StatFn = (path: string) => Promise<StatLike>;
 
 const execFileAsync = promisify(execFile);
 
+/** Timeout for each git call. */
+const GIT_TIMEOUT_MS = 5_000;
+
 /** Default GitRunner. Forces the C locale so stderr text is predictable. */
 export const runGit: GitRunner = async (cwd, args) => {
   const { stdout } = await execFileAsync("git", args, {
     cwd,
     env: { ...process.env, LC_ALL: "C", LANG: "C" },
-    timeout: 5_000,
+    timeout: GIT_TIMEOUT_MS,
   });
   return stdout;
 };
@@ -78,7 +81,7 @@ export async function resolveWorktree(
       return { root: await canonical(cwd), lifetimeStart: null, kind: "none" };
     }
     throw new WorktreeResolutionError(
-      `git rev-parse failed in ${cwd}`,
+      `git rev-parse failed in ${cwd}: ${gitFailureReason(err)}`,
       { cause: err },
     );
   }
@@ -121,6 +124,25 @@ export async function folderCreationTime(
     if (s.mtimeMs < earliest) earliest = s.mtimeMs;
   }
   return new Date(earliest);
+}
+
+/**
+ * Short, user-facing reason for a git failure: git's first stderr line
+ * (e.g. "fatal: detected dubious ownership…"), a missing git binary, a
+ * timeout, or the error message as a last resort.
+ */
+export function gitFailureReason(err: unknown): string {
+  const e = (err ?? {}) as {
+    stderr?: unknown;
+    code?: unknown;
+    killed?: unknown;
+    message?: unknown;
+  };
+  const stderr = typeof e.stderr === "string" ? e.stderr.trim() : "";
+  if (stderr) return stderr.split("\n")[0]!.trim();
+  if (e.code === "ENOENT") return "git not found";
+  if (e.killed === true) return `timed out after ${GIT_TIMEOUT_MS / 1000}s`;
+  return typeof e.message === "string" ? e.message : String(err);
 }
 
 function isNotARepo(err: unknown): boolean {

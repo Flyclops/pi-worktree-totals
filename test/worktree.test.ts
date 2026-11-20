@@ -102,6 +102,26 @@ describe("resolveWorktree", () => {
     );
   });
 
+  it.each([
+    [
+      { stderr: "fatal: detected dubious ownership in repository at '/r'\nTo add an exception…" },
+      "git rev-parse failed in REPO: fatal: detected dubious ownership in repository at '/r'",
+    ],
+    [{ code: "ENOENT", stderr: "" }, "git rev-parse failed in REPO: git not found"],
+    [
+      { killed: true, signal: "SIGTERM", stderr: "" },
+      "git rev-parse failed in REPO: timed out after 5s",
+    ],
+    [{ stderr: "" }, "git rev-parse failed in REPO: boom"],
+  ])("includes git's reason in the error (%o)", async (fields, want) => {
+    const failing = async () => {
+      throw Object.assign(new Error("boom"), fields);
+    };
+    await expect(resolveWorktree(repo, failing)).rejects.toThrow(
+      want.replace("REPO", repo),
+    );
+  });
+
   it("rejects malformed git output", async () => {
     await expect(
       resolveWorktree(repo, async () => "only-one-line\n"),
