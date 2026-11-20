@@ -1,0 +1,47 @@
+{
+  "name": "pi-worktree-totals",
+  "version": "0.1.1",
+  "private": true,
+  "description": "Pi extension showing total model cost and tokens across every pi session in a git worktree.",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-extension",
+    "cost",
+    "tokens",
+    "git-worktree"
+  ],
+  "license": "MIT",
+  "author": "Flyclops LLC",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Flyclops/pi-worktree-totals.git"
+  },
+  "homepage": "https://github.com/Flyclops/pi-worktree-totals#readme",
+  "bugs": {
+    "url": "https://github.com/Flyclops/pi-worktree-totals/issues"
+  },
+  "pi": {
+    "extensions": [
+      "./src/extension.ts"
+    ],
+    "changelogPath": ""
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "bench": "node bench/cold-start.ts"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "@earendil-works/pi-tui": "*"
+  },
+  "devDependencies": {
+    "@earendil-works/pi-coding-agent": "1.5.2",
+    "@types/node": "^24.19.2",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.12"
+  }
+}
