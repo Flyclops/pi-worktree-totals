@@ -215,13 +215,65 @@ const NO_TOKENS: TokenTotals = {
   cacheWrite: 0,
 };
 
-/** Narrow unknown entry data (e.g. from an older version) to a snapshot. */
+/**
+ * Narrow unknown entry data to a snapshot the renderer can draw. Checks
+ * every field formatReport reads, so a malformed or hand-edited entry is
+ * ignored instead of throwing. Optional token fields (absent in older
+ * snapshots) are allowed to be missing.
+ */
 export function isSnapshot(data: unknown): data is ReportSnapshot {
+  if (!isObj(data) || data.version !== 1) return false;
+  const { worktree: w } = data;
   return (
-    typeof data === "object" &&
-    data !== null &&
-    (data as { version?: unknown }).version === 1
+    isNum(data.takenAt) &&
+    isObj(w) &&
+    typeof w.root === "string" &&
+    (w.kind === "linked" || w.kind === "main" || w.kind === "none") &&
+    (w.lifetimeStart === null || isNum(w.lifetimeStart)) &&
+    isTotals(data.totals) &&
+    Array.isArray(data.byModel) &&
+    data.byModel.every(
+      (m) =>
+        Array.isArray(m) && typeof m[0] === "string" && isTotals(m[1]),
+    ) &&
+    isNum(data.sessionCount) &&
+    Array.isArray(data.sessions) &&
+    data.sessions.every(
+      (l) =>
+        isObj(l) &&
+        typeof l.label === "string" &&
+        isNum(l.startedAt) &&
+        isNum(l.cost) &&
+        (l.tokens === undefined || isTokens(l.tokens)),
+    ) &&
+    isNum(data.olderCost) &&
+    (data.olderTokens === undefined || isTokens(data.olderTokens)) &&
+    isNum(data.warningCount) &&
+    Array.isArray(data.warnings) &&
+    data.warnings.every((x) => typeof x === "string")
   );
+}
+
+function isObj(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function isNum(v: unknown): v is number {
+  return typeof v === "number" && Number.isFinite(v);
+}
+
+function isTokens(v: unknown): v is TokenTotals {
+  return (
+    isObj(v) &&
+    isNum(v.input) &&
+    isNum(v.output) &&
+    isNum(v.cacheRead) &&
+    isNum(v.cacheWrite)
+  );
+}
+
+function isTotals(v: unknown): v is Totals {
+  return isObj(v) && isNum(v.cost) && isTokens(v.tokens);
 }
 
 /**

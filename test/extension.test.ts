@@ -213,6 +213,17 @@ describe("extension", () => {
       expect(status).not.toHaveBeenCalled();
     });
 
+    it("does not touch a replaced runtime after awaiting", async () => {
+      // Copilot review, PR #1: /resume or /reload during the scan.
+      const { fire, commands, appended } = loadAll();
+      const { ctx } = fakeCtx();
+      fire("session_start", ctx);
+      const pending = commands.get(COMMAND)!.handler("", ctx);
+      fire("session_shutdown", ctx);
+      await pending;
+      expect(appended).toHaveLength(0);
+    });
+
     it("propagates failures to pi", async () => {
       const { pi, commands } = fakePi();
       createExtension({

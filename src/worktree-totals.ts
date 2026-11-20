@@ -189,6 +189,15 @@ export class WorktreeTotalsIndex {
     const prev = cached?.kind === "member" ? cached.state : undefined;
     const { read, header } = await readSessionFile(path, prev);
     if (read) {
+      // A changed header line means the file was rewritten. pi never changes
+      // a Session's cwd, but re-check membership rather than trust the cache.
+      if (prev && read.state.headerLine !== prev.headerLine) {
+        const cwd = await this.canon(read.state.header.cwd);
+        if (!isWithin(cwd, this.input.worktreeRoot)) {
+          this.cache.set(path, { kind: "other" });
+          return;
+        }
+      }
       this.cache.set(path, { kind: "member", ...read });
     } else if (header === "invalid") {
       this.cache.set(path, { kind: "invalid", size: st.size, mtimeMs: st.mtimeMs });

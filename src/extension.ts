@@ -126,8 +126,13 @@ export function createExtension(deps: ExtensionDeps = defaultDeps) {
         "Show cost and tokens across every session in this worktree",
       handler: async (_args, ctx) => {
         // Errors propagate: pi reports command failures in the UI.
+        // If the runtime is replaced (/resume, /reload) while we wait, stop:
+        // pi's session-bound APIs throw on a stale instance.
+        const gen = generation;
         const t = await ensureTracker(ctx);
+        if (gen !== generation) return;
         const totals = await t.refresh(ctx.sessionManager);
+        if (gen !== generation) return;
         pi.appendEntry<ReportSnapshot>(
           REPORT_ENTRY,
           toSnapshot(t.worktree, totals, Date.now()),

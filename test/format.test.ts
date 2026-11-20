@@ -183,4 +183,26 @@ describe("formatReport", () => {
     expect(isSnapshot(undefined)).toBe(false);
     expect(isSnapshot({ version: 2 })).toBe(false);
   });
+
+  it("rejects version-1 data missing fields the renderer uses", () => {
+    // Copilot review, PR #1.
+    const good = JSON.parse(JSON.stringify(toSnapshot(wt, base, AT)));
+    expect(isSnapshot(good)).toBe(true);
+    expect(isSnapshot({ version: 1 })).toBe(false);
+    const broken = (patch: object) => isSnapshot({ ...good, ...patch });
+    expect(broken({ worktree: { root: "/r", kind: "bogus" } })).toBe(false);
+    expect(broken({ totals: { cost: "1" } })).toBe(false);
+    expect(broken({ byModel: [["m", null]] })).toBe(false);
+    expect(broken({ sessions: [{ label: 1, startedAt: 0, cost: 0 }] })).toBe(
+      false,
+    );
+    expect(broken({ warnings: [1] })).toBe(false);
+  });
+
+  it("accepts snapshots without optional token fields", () => {
+    const old = JSON.parse(JSON.stringify(toSnapshot(wt, base, AT)));
+    delete old.olderTokens;
+    for (const x of old.sessions) delete x.tokens;
+    expect(isSnapshot(old)).toBe(true);
+  });
 });

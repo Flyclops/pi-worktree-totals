@@ -262,4 +262,22 @@ describe("WorktreeTotalsIndex", () => {
     )!;
     expect((await index.refresh([foreign])).cost).toBe(1);
   });
+
+  it("re-checks membership when a member file's header changes", async () => {
+    // Copilot review, PR #1 (defensive: pi never changes a session's cwd).
+    const f = session(1);
+    session(2);
+    expect((await index.refresh()).cost).toBe(3);
+    writeFileSync(
+      f,
+      line({
+        type: "session",
+        version: 3,
+        id: "moved",
+        timestamp: new Date(min(0)).toISOString(),
+        cwd: fx.dir("other-worktree"),
+      }) + line(e.assistant(min(1), 40)),
+    );
+    expect((await index.refresh()).cost).toBe(2);
+  });
 });
