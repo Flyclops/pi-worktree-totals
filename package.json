@@ -1,6 +1,6 @@
 {
   "name": "pi-worktree-totals",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Pi extension showing total model cost and tokens across every pi session in a git worktree.",
   "type": "module",
