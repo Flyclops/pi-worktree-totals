@@ -84,7 +84,9 @@ export function aggregate(
       add(m, e.cost, e.tokens);
     }
     if (s.malformedLines > 0) {
-      warnings.push(`${s.path}: skipped ${s.malformedLines} malformed line(s)`);
+      // No count in the text: notifications dedupe by message, so a
+      // growing count would notify again on every refresh (issue 08).
+      warnings.push(`${s.path}: skipped malformed lines`);
     }
     // Leave out Sessions that belong only to a previous Worktree Lifetime.
     // Any counted entry keeps the Session, even at zero cost (free models),
