@@ -55,3 +55,15 @@ fails the decode and silently drops out with a warning.
   | 1.5 GB | fails                    | 214 MB, 787 ms  |
 
   Cold-start and refresh benchmarks unchanged.
+- Copilot (PR #2): a line spanning many chunks was re-copied every chunk
+  (quadratic). It now keeps owned pieces, scans only fresh bytes, and joins
+  once per line. One-line file, before → after:
+
+  | Line   | Before              | After            |
+  | ------ | ------------------- | ---------------- |
+  | 50 MB  | 202 ms, 794 MB      | 51 ms, 425 MB    |
+  | 100 MB | 880 ms, 2,598 MB    | 94 ms, 637 MB    |
+  | 200 MB | 3,004 ms, 8,532 MB  | 189 ms, 1,078 MB |
+
+  (Peak includes the generator's copy and the unavoidable whole-line parse.)
+  Test: 1 MB line over 8-byte chunks finishes within 3 s (times out before).

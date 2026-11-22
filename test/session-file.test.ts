@@ -100,6 +100,26 @@ describe("chunked reading (issue 08)", () => {
     expect(next.billed.map((b) => b.cost)).toEqual([0.5, 0.25, 1, 2]);
   });
 
+  it(
+    "stays linear for one line spanning many chunks",
+    async () => {
+      // Copilot review, PR #2: re-copying the partial line every chunk is
+      // quadratic. 1 MB over 8-byte chunks is 131k chunks: linear finishes
+      // in well under a second; quadratic copies ~128 GB and times out.
+      const long = msg("t", 3, {
+        role: "toolResult",
+        content: "é".repeat(512 * 1024), // multi-byte, 1 MB
+        usage: usage(0.75),
+      });
+      const body = `${JSON.stringify(lines[0])}\n${JSON.stringify(long)}\n`;
+      const path = tmpFile(body);
+      const st = (await readSessionFile(path, undefined, 8)).read!.state;
+      expect(st.billed.map((b) => b.cost)).toEqual([0.75]);
+      expect(st.offset).toBe(Buffer.byteLength(body));
+    },
+    3_000,
+  );
+
   it("stores the first prompt already shortened", async () => {
     const st = (await readSessionFile(tmpFile(text))).read!.state;
     expect(st.firstPrompt!.length).toBeLessThanOrEqual(60);

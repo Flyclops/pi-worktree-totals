@@ -162,7 +162,8 @@ export const CHUNK_BYTES = 4 * 1024 * 1024;
  *
  * Reads in `chunkBytes` chunks and folds each line into the totals as it's
  * parsed, so no whole-file buffer, string or entry list is ever held. A
- * partial line at a chunk boundary carries over to the next chunk. Text is
+ * partial line at a chunk boundary is kept as pieces and joined once it
+ * completes, so even a line spanning many chunks is linear. Text is
  * only decoded up to a newline byte, which never occurs inside a UTF-8
  * sequence, so multi-byte characters split across chunks decode correctly.
  *
@@ -195,7 +196,11 @@ export async function readSessionFile(
     const acc = startAcc(base);
     let pos = base.offset; // next byte to read
     let consumed = base.offset; // just past the last complete line
-    let carry = Buffer.alloc(0); // partial line from the previous chunk
+    // Pieces of the unfinished line so far, each an owned copy (`chunk` is
+    // reused). Only fresh bytes are scanned for newlines, and the pieces are
+    // joined once when the line completes, so a line spanning many chunks
+    // costs O(line length), not O(length²).
+    let pending: Buffer[] = [];
     const chunk = Buffer.alloc(Math.max(1, Math.min(chunkBytes, st.size - pos)));
     while (pos < st.size) {
       const want = Math.min(chunk.length, st.size - pos);
@@ -203,15 +208,18 @@ export async function readSessionFile(
       if (bytesRead === 0) break;
       pos += bytesRead;
       const fresh = chunk.subarray(0, bytesRead);
-      const data = carry.length ? Buffer.concat([carry, fresh]) : fresh;
-      const nl = data.lastIndexOf(NL);
+      const nl = fresh.lastIndexOf(NL);
       if (nl === -1) {
-        carry = Buffer.from(data); // copy: `chunk` is reused
+        pending.push(Buffer.from(fresh));
         continue;
       }
-      addLines(acc, data.toString("utf8", 0, nl));
-      consumed = pos - data.length + nl + 1;
-      carry = Buffer.from(data.subarray(nl + 1));
+      const complete = fresh.subarray(0, nl);
+      const text = pending.length
+        ? Buffer.concat([...pending, complete]).toString("utf8")
+        : complete.toString("utf8");
+      addLines(acc, text);
+      consumed = pos - bytesRead + nl + 1;
+      pending = nl + 1 < bytesRead ? [Buffer.from(fresh.subarray(nl + 1))] : [];
     }
     return {
       header: "ok",
