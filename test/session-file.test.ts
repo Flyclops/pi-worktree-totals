@@ -1,5 +1,17 @@
-import { describe, expect, it } from "vitest";
-import { parseSessionText, promptLabel } from "../src/session-file.ts";
+import {
+  appendFileSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterAll, describe, expect, it } from "vitest";
+import {
+  parseSessionText,
+  promptLabel,
+  readSessionFile,
+} from "../src/session-file.ts";
 
 const skill = (body: string) =>
   `<skill name="grill-with-docs" location="/s/SKILL.md">\n${body}\n</skill>`;
@@ -37,3 +49,98 @@ describe("session labels", () => {
     expect(parseSessionText("/f", text)!.label).toBe("/skill:grill-with-docs");
   });
 });
+
+describe("chunked reading (issue 08)", () => {
+  // Multi-byte text (emoji, CJK) in prompts and model names, so tiny chunks
+  // split UTF-8 sequences; a malformed line; a session name.
+  const lines = [
+    { type: "session", id: "s", timestamp: "2026-01-01T00:00:00Z", cwd: "/r" },
+    msg("u1", 1, { role: "user", content: "héllo 🌍 世界 ".repeat(20) }),
+    msg("a1", 2, assistant("模型-🚀", 0.5)),
+    "{not json",
+    msg("t1", 3, { role: "toolResult", content: "x".repeat(300), usage: usage(0.25) }),
+    { type: "session_info", id: "n", timestamp: "2026-01-01T00:00:04Z", name: "Ünïcode ✨" },
+    msg("a2", 5, assistant("m", 1)),
+  ];
+  const text = lines
+    .map((l) => (typeof l === "string" ? l : JSON.stringify(l)))
+    .join("\n")
+    .concat("\n");
+
+  it.each([1, 2, 3, 7, 64, 4096])(
+    "chunk size %i gives the same result as one whole read",
+    async (chunk) => {
+      const path = tmpFile(text);
+      const whole = (await readSessionFile(path)).read!.state;
+      const chunked = (await readSessionFile(path, undefined, chunk)).read!.state;
+      expect(chunked).toEqual(whole);
+      expect(whole.billed.map((b) => b.model)).toEqual([
+        "undefined/模型-🚀",
+        "Tools/summaries",
+        "undefined/m",
+      ]);
+      expect(whole.malformedLines).toBe(1);
+      expect(whole.offset).toBe(Buffer.byteLength(text));
+    },
+  );
+
+  it("leaves a half-written last line for later, with tiny chunks", async () => {
+    const partial = `${text}{"type":"message","id":"a3"`;
+    const path = tmpFile(partial);
+    const st = (await readSessionFile(path, undefined, 5)).read!.state;
+    expect(st.offset).toBe(Buffer.byteLength(text));
+    expect(st.malformedLines).toBe(1);
+  });
+
+  it("resumes from the offset with tiny chunks", async () => {
+    const path = tmpFile(text);
+    const first = (await readSessionFile(path, undefined, 3)).read!.state;
+    appendFileSync(path, `${JSON.stringify(msg("a3", 6, assistant("m", 2)))}\n`);
+    const next = (await readSessionFile(path, first, 3)).read!.state;
+    expect(next.billed.map((b) => b.cost)).toEqual([0.5, 0.25, 1, 2]);
+  });
+
+  it(
+    "stays linear for one line spanning many chunks",
+    async () => {
+      // Copilot review, PR #2: re-copying the partial line every chunk is
+      // quadratic. 1 MB over 8-byte chunks is 131k chunks: linear finishes
+      // in well under a second; quadratic copies ~128 GB and times out.
+      const long = msg("t", 3, {
+        role: "toolResult",
+        content: "é".repeat(512 * 1024), // multi-byte, 1 MB
+        usage: usage(0.75),
+      });
+      const body = `${JSON.stringify(lines[0])}\n${JSON.stringify(long)}\n`;
+      const path = tmpFile(body);
+      const st = (await readSessionFile(path, undefined, 8)).read!.state;
+      expect(st.billed.map((b) => b.cost)).toEqual([0.75]);
+      expect(st.offset).toBe(Buffer.byteLength(body));
+    },
+    3_000,
+  );
+
+  it("stores the first prompt already shortened", async () => {
+    const st = (await readSessionFile(tmpFile(text))).read!.state;
+    expect(st.firstPrompt!.length).toBeLessThanOrEqual(60);
+  });
+});
+
+function usage(cost: number) {
+  return { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, cost: { total: cost } };
+}
+function assistant(model: string, cost: number) {
+  return { role: "assistant", model, content: [], usage: usage(cost) };
+}
+function msg(id: string, sec: number, message: object) {
+  const timestamp = new Date(Date.UTC(2026, 0, 1, 0, 0, sec)).toISOString();
+  return { type: "message", id, timestamp, message };
+}
+const tmpDir = mkdtempSync(join(tmpdir(), "pwt-sf-"));
+afterAll(() => rmSync(tmpDir, { recursive: true, force: true }));
+let tmpN = 0;
+function tmpFile(content: string): string {
+  const p = join(tmpDir, `${++tmpN}.jsonl`);
+  writeFileSync(p, content);
+  return p;
+}

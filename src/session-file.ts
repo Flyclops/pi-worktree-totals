@@ -151,14 +151,29 @@ export interface FileRead {
 }
 
 /**
+ * Bytes read per chunk. Bounds memory per file to roughly one chunk plus the
+ * longest single line, instead of the whole unread region (issue 08).
+ */
+export const CHUNK_BYTES = 4 * 1024 * 1024;
+
+/**
  * Read a session file, resuming from `prev` when the file was only appended
  * to. Returns undefined for files that aren't (yet) valid pi sessions.
  *
- * Cost: O(new bytes) when resuming, O(file bytes) otherwise.
+ * Reads in `chunkBytes` chunks and folds each line into the totals as it's
+ * parsed, so no whole-file buffer, string or entry list is ever held. A
+ * partial line at a chunk boundary is kept as pieces and joined once it
+ * completes, so even a line spanning many chunks is linear. Text is
+ * only decoded up to a newline byte, which never occurs inside a UTF-8
+ * sequence, so multi-byte characters split across chunks decode correctly.
+ *
+ * Cost: O(new bytes) time when resuming, O(file bytes) otherwise; memory
+ * O(chunkBytes + longest line).
  */
 export async function readSessionFile(
   path: string,
   prev?: ParseState,
+  chunkBytes = CHUNK_BYTES,
 ): Promise<{ read?: FileRead; header: HeaderRead["kind"] }> {
   const fh = await open(path, "r");
   try {
@@ -168,28 +183,51 @@ export async function readSessionFile(
     const head = await readHeaderFrom(fh);
     if (head.kind !== "ok") return { header: head.kind };
 
-    let state = initialState(head.header, head.line, head.bytes);
+    let base = initialState(head.header, head.line, head.bytes);
     if (
       prev &&
       prev.headerLine === head.line &&
       st.size >= prev.offset &&
       (await byteAt(fh, prev.offset - 1)) === NL
     ) {
-      state = prev;
+      base = prev;
     }
 
-    const len = st.size - state.offset;
-    if (len > 0) {
-      const buf = Buffer.alloc(len);
-      const { bytesRead } = await fh.read(buf, 0, len, state.offset);
-      const lastNl = buf.subarray(0, bytesRead).lastIndexOf(NL);
-      if (lastNl !== -1) {
-        state = feed(state, buf.toString("utf8", 0, lastNl), lastNl + 1);
+    const acc = startAcc(base);
+    let pos = base.offset; // next byte to read
+    let consumed = base.offset; // just past the last complete line
+    // Pieces of the unfinished line so far, each an owned copy (`chunk` is
+    // reused). Only fresh bytes are scanned for newlines, and the pieces are
+    // joined once when the line completes, so a line spanning many chunks
+    // costs O(line length), not O(length²).
+    let pending: Buffer[] = [];
+    const chunk = Buffer.alloc(Math.max(1, Math.min(chunkBytes, st.size - pos)));
+    while (pos < st.size) {
+      const want = Math.min(chunk.length, st.size - pos);
+      const { bytesRead } = await fh.read(chunk, 0, want, pos);
+      if (bytesRead === 0) break;
+      pos += bytesRead;
+      const fresh = chunk.subarray(0, bytesRead);
+      const nl = fresh.lastIndexOf(NL);
+      if (nl === -1) {
+        pending.push(Buffer.from(fresh));
+        continue;
       }
+      const complete = fresh.subarray(0, nl);
+      const text = pending.length
+        ? Buffer.concat([...pending, complete]).toString("utf8")
+        : complete.toString("utf8");
+      addLines(acc, text);
+      consumed = pos - bytesRead + nl + 1;
+      pending = nl + 1 < bytesRead ? [Buffer.from(fresh.subarray(nl + 1))] : [];
     }
     return {
       header: "ok",
-      read: { state, size: st.size, mtimeMs: st.mtimeMs },
+      read: {
+        state: finish(base, acc, consumed),
+        size: st.size,
+        mtimeMs: st.mtimeMs,
+      },
     };
   } finally {
     await fh.close();
@@ -215,11 +253,28 @@ export function parseSessionText(
   const headerLine = nl === -1 ? text : text.slice(0, nl);
   const header = parseHeader(headerLine);
   if (!header) return undefined;
-  const body = nl === -1 ? "" : text.slice(nl + 1);
-  return toParsedSession(
-    path,
-    feed(initialState(header, headerLine, 0), body, 0),
-  );
+  const base = initialState(header, headerLine, 0);
+  const acc = startAcc(base);
+  if (nl !== -1) addLines(acc, text.slice(nl + 1));
+  return toParsedSession(path, finish(base, acc, 0));
+}
+
+/**
+ * Build a ParsedSession from already-parsed entries, such as pi's in-memory
+ * `sessionManager.getEntries()` for the live Session (spec Q19).
+ * Returns undefined when the header is invalid.
+ */
+export function parseSessionEntries(
+  path: string,
+  header: unknown,
+  entries: readonly unknown[],
+): ParsedSession | undefined {
+  const h = headerFrom(header);
+  if (!h) return undefined;
+  const base = initialState(h, "", 0);
+  const acc = startAcc(base);
+  for (const entry of entries) addEntry(acc, entry);
+  return toParsedSession(path, finish(base, acc, 0));
 }
 
 export function toParsedSession(path: string, s: ParseState): ParsedSession {
@@ -241,48 +296,61 @@ function initialState(
 }
 
 /**
- * Consume newline-separated entry lines, returning a new state that has
- * advanced `bytes`. `prev` is left untouched, so a failed read never corrupts
- * cached state.
- *
- * O(bytes): one JSON.parse per line.
+ * Mutable accumulator for one parse pass. Starts from a ParseState and is
+ * folded into a *new* ParseState by finish(), so cached state is never
+ * mutated and a failed read can't corrupt it.
  */
-function feed(prev: ParseState, text: string, bytes: number): ParseState {
-  const entries: unknown[] = [];
-  let bad = 0;
-  for (const line of text.split("\n")) {
-    if (line.trim() === "") continue;
-    try {
-      entries.push(JSON.parse(line));
-    } catch {
-      bad++; // Reported via ParsedSession.malformedLines.
-    }
-  }
-  const next = applyEntries(prev, entries);
+interface Acc {
+  header: SessionHeader;
+  forked: boolean;
+  /** Only entries billed in this pass. */
+  billed: BilledEntry[];
+  malformedLines: number;
+  name: string | undefined;
+  firstPrompt: string | undefined;
+}
+
+function startAcc(s: ParseState): Acc {
   return {
-    ...next,
-    offset: prev.offset + bytes,
-    malformedLines: next.malformedLines + bad,
+    header: s.header,
+    forked: s.header.parentSession !== undefined,
+    billed: [],
+    malformedLines: s.malformedLines,
+    name: s.name,
+    firstPrompt: s.firstPrompt,
   };
 }
 
-/**
- * Build a ParsedSession from already-parsed entries, such as pi's in-memory
- * `sessionManager.getEntries()` for the live Session (spec Q19).
- * Returns undefined when the header is invalid.
- */
-export function parseSessionEntries(
-  path: string,
-  header: unknown,
-  entries: readonly unknown[],
-): ParsedSession | undefined {
-  const h = headerFrom(header);
-  if (!h) return undefined;
-  return toParsedSession(path, applyEntries(initialState(h, "", 0), entries));
+function finish(prev: ParseState, acc: Acc, offset: number): ParseState {
+  return {
+    ...prev,
+    offset,
+    billed: acc.billed.length ? prev.billed.concat(acc.billed) : prev.billed,
+    malformedLines: acc.malformedLines,
+    // Always set: an empty session_info name clears the title in pi, so a
+    // cleared name must override an earlier one from `prev`.
+    name: acc.name,
+    firstPrompt: acc.firstPrompt,
+  };
+}
+
+/** Parse newline-separated lines, folding each entry in as it's parsed. */
+function addLines(acc: Acc, text: string): void {
+  for (const line of text.split("\n")) {
+    if (line.trim() === "") continue;
+    let entry: unknown;
+    try {
+      entry = JSON.parse(line);
+    } catch {
+      acc.malformedLines++; // Reported via ParsedSession.malformedLines.
+      continue;
+    }
+    addEntry(acc, entry);
+  }
 }
 
 /**
- * Fold entries into a new state. Entries that aren't objects count as
+ * Fold one entry into the accumulator. Entries that aren't objects count as
  * malformed.
  *
  * Inherited Entries: fork/clone copies the parent's entries, keeping their
@@ -291,51 +359,35 @@ export function parseSessionEntries(
  * inherited. That holds even when the parent lives outside this Worktree,
  * which the id+timestamp dedupe alone can't catch.
  */
-function applyEntries(
-  prev: ParseState,
-  entries: readonly unknown[],
-): ParseState {
-  const { header } = prev;
-  const forked = header.parentSession !== undefined;
-  const billed: BilledEntry[] = [];
-  let { malformedLines, name, firstPrompt } = prev;
-
-  for (const entry of entries) {
-    if (!isRecord(entry)) {
-      malformedLines++;
-      continue;
-    }
-
-    if (entry.type === "session_info" && typeof entry.name === "string") {
-      name = entry.name.trim() || undefined; // Latest name wins.
-    }
-    if (firstPrompt === undefined) firstPrompt = userPromptText(entry);
-
-    const billing = billingOf(entry);
-    if (!billing) continue;
-    const at =
-      typeof entry.timestamp === "string" ? Date.parse(entry.timestamp) : NaN;
-    if (Number.isNaN(at)) {
-      malformedLines++;
-      continue;
-    }
-    if (forked && at < header.startedAt) continue; // Inherited Entry.
-    billed.push({
-      key: `${String(entry.id)}|${entry.timestamp as string}`,
-      at,
-      ...billing,
-    });
+function addEntry(acc: Acc, entry: unknown): void {
+  if (!isRecord(entry)) {
+    acc.malformedLines++;
+    return;
   }
 
-  return {
-    ...prev,
-    billed: billed.length ? prev.billed.concat(billed) : prev.billed,
-    malformedLines,
-    // Always set: an empty session_info name clears the title in pi, so a
-    // cleared name must override an earlier one from `prev`.
-    name,
-    firstPrompt,
-  };
+  if (entry.type === "session_info" && typeof entry.name === "string") {
+    // Latest name wins; empty clears it. Stored shortened (issue 08).
+    acc.name = truncate(entry.name) || undefined;
+  }
+  if (acc.firstPrompt === undefined) {
+    const prompt = userPromptText(entry);
+    if (prompt !== undefined) acc.firstPrompt = truncate(prompt);
+  }
+
+  const billing = billingOf(entry);
+  if (!billing) return;
+  const at =
+    typeof entry.timestamp === "string" ? Date.parse(entry.timestamp) : NaN;
+  if (Number.isNaN(at)) {
+    acc.malformedLines++;
+    return;
+  }
+  if (acc.forked && at < acc.header.startedAt) return; // Inherited Entry.
+  acc.billed.push({
+    key: `${String(entry.id)}|${entry.timestamp as string}`,
+    at,
+    ...billing,
+  });
 }
 
 type Billing = { cost: number; model: string; tokens: TokenTotals };

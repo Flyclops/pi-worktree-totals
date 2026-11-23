@@ -1,4 +1,4 @@
-import { symlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { TOOLS_BUCKET } from "../src/session-file.ts";
@@ -258,8 +258,21 @@ describe("computeWorktreeTotals", () => {
     const r = await run();
     expect(r.cost).toBe(1);
     expect(r.warnings).toHaveLength(2);
-    expect(r.warnings.join("\n")).toMatch(/2 malformed line/);
+    expect(r.warnings.join("\n")).toMatch(/skipped malformed lines/);
     expect(r.warnings.join("\n")).toMatch(/garbage\.jsonl: not a pi session/);
+  });
+
+  it("malformed-line warning is stable as the count grows", async () => {
+    // Issue 08: notifications dedupe by message, so it mustn't embed a count.
+    const f = fx.write(active, {
+      cwd: repo,
+      startedAt: min(0),
+      entries: [e.assistant(min(1), 1)],
+      rawLines: ["{bad"],
+    });
+    const before = (await run()).warnings;
+    appendFileSync(f, "{bad again\n");
+    expect((await run()).warnings).toEqual(before);
   });
 
   it("labels sessions by name, else first prompt", async () => {

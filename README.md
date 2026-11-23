@@ -115,6 +115,7 @@ always agree with pi. Nothing is stored in your worktree.
 npm test            # Vitest
 npm run typecheck   # tsc --noEmit
 npm run bench       # cold-start benchmark (synthetic)
+npm run bench:large # peak memory parsing one large session (default 500 MB)
 node bench/cold-start.ts --real [dir]   # against your sessions, read-only
 ```
 
